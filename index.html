@@ -101,6 +101,10 @@
       try {
         resultBox.textContent = "Test en cours...";
 
+      turnstileToken =
+  turnstileToken ||
+  document.querySelector('input[name="cf-turnstile-response"]')?.value ||
+  null;
         if (!turnstileToken) {
           resultBox.textContent =
             "Erreur : Turnstile n'est pas encore validé.";
