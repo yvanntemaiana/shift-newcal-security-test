@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shift Newcal Security Test</title>
+
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0b0b0b;
+      color: #ffffff;
+      padding: 24px;
+      max-width: 760px;
+      margin: auto;
+    }
+
+    .card {
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+      background: #151515;
+    }
+
+    button {
+      background: #9be000;
+      border: none;
+      border-radius: 8px;
+      padding: 14px 18px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 16px;
+    }
+
+    pre {
+      background: #000;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    .warning {
+      color: #ffcc66;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Test sécurité Shift Newcal</h1>
+
+  <div class="card">
+    <p>
+      Cette page teste uniquement la connexion sécurisée entre
+      GitHub Pages, Cloudflare Turnstile, Supabase et la fonction
+      <strong>diagnostic-v2</strong>.
+    </p>
+
+    <p class="warning">
+      Aucune clé secrète ne doit être placée ici.
+    </p>
+
+    <div
+      class="cf-turnstile"
+      data-sitekey="0x4AAAAAADtT0Fr92HYv38cD"
+      data-callback="onTurnstileSuccess">
+    </div>
+
+    <button onclick="runTest()">
+      Tester la connexion sécurisée
+    </button>
+  </div>
+
+  <div class="card">
+    <h2>Résultat</h2>
+    <pre id="result">En attente du test...</pre>
+  </div>
+
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+    const SUPABASE_URL = "https://vdcbtzvsmzsvallmsvyk.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_29De_Xklp-XwaRx8uYjkkQ_xcUrdp_D";
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let turnstileToken = null;
+
+    window.onTurnstileSuccess = function (token) {
+      turnstileToken = token;
+      document.getElementById("result").textContent =
+        "Turnstile validé. Vous pouvez lancer le test.";
+    };
+
+    window.runTest = async function () {
+      const resultBox = document.getElementById("result");
+
+      try {
+        resultBox.textContent = "Test en cours...";
+
+        // 1. Vérifier si une session Supabase existe déjà
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+
+        if (sessionError) {
+          resultBox.textContent =
+            "Erreur lors de la vérification de la session Supabase.";
+          return;
+        }
+
+        const existingSession = sessionData?.session;
+
+        let userId;
+        let sessionType;
+
+        if (existingSession) {
+          // 2. Session existante : réutilisation sans Turnstile ni signInAnonymously
+          userId = existingSession.user?.id;
+          sessionType = "existante";
+
+        } else {
+          // 3. Aucune session : Turnstile obligatoire, création d'un utilisateur anonyme
+          turnstileToken =
+            turnstileToken ||
+            document.querySelector('input[name="cf-turnstile-response"]')?.value ||
+            null;
+
+          if (!turnstileToken) {
+            resultBox.textContent =
+              "Erreur : Turnstile n'est pas encore validé.";
+            return;
+          }
+
+          const { data: signInData, error: signInError } =
+            await supabase.auth.signInAnonymously({
+              options: {
+                captchaToken: turnstileToken,
+              },
+            });
+
+          if (signInError) {
+            resultBox.textContent =
+              "Erreur lors de la connexion anonyme :\n\n" +
+              JSON.stringify(signInError, null, 2);
+            return;
+          }
+
+          if (!signInData?.user?.id || !signInData?.session) {
+            resultBox.textContent =
+              "Erreur : la nouvelle session anonyme n'a pas été créée correctement.";
+            return;
+          }
+
+          userId = signInData.user.id;
+          sessionType = "nouvel utilisateur anonyme";
+
+          // 4. Vider le jeton Turnstile : ne jamais réutiliser l'ancien jeton
+          turnstileToken = null;
+        }
+
+        // 5. Appel à diagnostic-v2 (inchangé)
+        const { data, error } = await supabase.functions.invoke("diagnostic-v2", {
+          body: {
+            test: true,
+            source: "github-pages-security-test",
+          },
+        });
+
+        if (error) {
+          resultBox.textContent =
+            "Erreur lors de l'appel diagnostic-v2 :\n\n" +
+            JSON.stringify(error, null, 2);
+          return;
+        }
+
+        resultBox.textContent =
+          "Test réussi.\n\n" +
+          "Session utilisée : " + sessionType + "\n" +
+          "Utilisateur anonyme Supabase : " + userId + "\n\n" +
+          "Réponse diagnostic-v2 :\n" +
+          JSON.stringify(data, null, 2);
+
+      } catch (err) {
+        resultBox.textContent =
+          "Erreur inattendue :\n\n" +
+          String(err);
+      }
+    };
+  </script>
+</body>
+</html>
